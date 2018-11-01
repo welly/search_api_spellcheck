@@ -2,10 +2,13 @@
 
 namespace Drupal\search_api_spellcheck\Plugin\views\area;
 
+use Drupal\Core\Cache\Cache;
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Url;
 use Drupal\search_api\Plugin\views\filter\SearchApiFulltext;
+use Drupal\search_api\Query\ResultSetInterface;
 use Drupal\views\Plugin\views\area\AreaPluginBase;
+use Drupal\views\Views;
 
 /**
  * Provides an area for messages.
@@ -15,6 +18,13 @@ use Drupal\views\Plugin\views\area\AreaPluginBase;
  * @ViewsArea("search_api_spellcheck")
  */
 class SpellCheck extends AreaPluginBase {
+
+  const SPELLCHECK_CACHE_SUFFIX = ":spellcheck";
+  const SPELLCHECK_CACHE_BIN = "data";
+  /**
+   * @var \Drupal\views\Plugin\views\cache\CachePluginBase
+   */
+  private $cache;
 
   /**
    * The available filters for the current view.
@@ -70,6 +80,42 @@ class SpellCheck extends AreaPluginBase {
   }
 
   /**
+   * @return mixed
+   */
+  protected function getCache() {
+    if(!$this->cache) {
+      if (!empty($this->live_preview)) {
+        $this->cache = Views::pluginManager('cache')->createInstance('none');
+      } else {
+        $this->cache = $this->view->display_handler->getPlugin('cache');
+      }
+    }
+    return $this->cache;
+  }
+
+  /**
+   * Saves the solr response to the cache
+   * @param $values
+   */
+  public function postExecute(&$values) {
+    /** @var ResultSetInterface $result */
+    $result = $this->query->getSearchApiResults();
+    $response = $result->getExtraData('search_api_solr_response');
+    $tags = $this->getCache()->getCacheTags();
+    \Drupal::cache(self::SPELLCHECK_CACHE_BIN)->set($this->getCacheKey(), $response, Cache::PERMANENT, $tags);
+    parent::postExecute($values);
+  }
+
+  /**
+   * Returns a generated cache key (based on the views cache key)
+   * @return string
+   */
+  public function getCacheKey() {
+    $cache = $this->getCache();
+    return $cache->generateResultsKey() . self::SPELLCHECK_CACHE_SUFFIX;
+  }
+
+  /**
    * Render the area.
    *
    * @param bool $empty
@@ -80,13 +126,13 @@ class SpellCheck extends AreaPluginBase {
    */
   public function render($empty = FALSE) {
     if ($this->options['search_api_spellcheck_hide_on_result'] == FALSE || ($this->options['search_api_spellcheck_hide_on_result'] && $empty)) {
-      $result = $this->query->getSearchApiResults();
-      // Check if extraData is there.
-      if ($extra_data = $result->getExtraData('search_api_solr_response')) {
+      $cacheItem = \Drupal::cache(self::SPELLCHECK_CACHE_BIN)->get($this->getCacheKey());
+      if ($extra_data = $cacheItem->data) {
         // Initialize our array.
         $suggestions = [];
         // Check that we have suggestions.
-        if (!empty($extra_data['spellcheck'])) {
+        
+        if (!empty($extra_data['spellcheck']) && !empty($extra_data['spellcheck']['suggestions'])) {
           // Loop over the suggestions and print them as links.
           foreach ($extra_data['spellcheck'] as $suggestion) {
             // If we have a match within our filters we add the suggestion.
@@ -145,7 +191,7 @@ class SpellCheck extends AreaPluginBase {
           if (!empty($filter->options['expose']['identifier'])) {
             $key = $filter->options['expose']['identifier'];
           }
-          $this->filters[$key] = !empty($exposed_input[$key]) ? $exposed_input[$key] : FALSE;
+          $this->filters[$key] = !empty($exposed_input[$key]) ? strtolower($exposed_input[$key]) : FALSE;
         }
       }
     }
