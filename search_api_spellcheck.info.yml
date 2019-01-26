@@ -1,6 +1,6 @@
 type: module
-name: 'Search api spellcheck'
-description: 'Spell checking for search api.'
+name: 'Search API Spellcheck'
+description: 'Provides spellcheck Views area plugin'
 package: Search
 dependencies:
   - search_api_solr
